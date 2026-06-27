@@ -65,7 +65,7 @@ on:
       inject_script:
         description: "URL Script JavaScript Adblocker / UserScript (Opsional)"
         required: false
-        default: "https://cdn.jsdelivr.net/gh/TheRealJoelmatic/RemoveAdblockThing@main/Youtube-Ad-blocker-Reminder-Remover.user.js"
+        default: ""
 
 jobs:
   build:
