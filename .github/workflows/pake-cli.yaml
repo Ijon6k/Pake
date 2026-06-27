@@ -95,7 +95,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: rui314/setup-mold@v1
 
-      - name: Download Adblock Script
+      - name: Download or Load Local Adblock Script
         shell: bash
         run: |
           if [ -n "${{ inputs.inject_script }}" ]; then
@@ -103,6 +103,9 @@ jobs:
             curl -sL "${{ inputs.inject_script }}" -o raw_script.js
             sed '/\/\/ ==UserScript==/,/\/\/ ==\/UserScript==/d' raw_script.js > clean_adblock.js
             echo "Script cleaned and saved to clean_adblock.js"
+          elif [ -f "adblock.js" ]; then
+            echo "Using local adblock.js found in repository..."
+            cp adblock.js clean_adblock.js
           fi
 
       - name: Rust cache restore
