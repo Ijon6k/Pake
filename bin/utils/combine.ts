@@ -13,12 +13,8 @@ export default async function combineFiles(files: string[], output: string) {
       });`;
       }
 
-      const fileContent = await fs.readFile(file);
-      return (
-        "window.addEventListener('DOMContentLoaded', (_event) => { " +
-        fileContent +
-        ' });'
-      );
+      const fileContent = await fs.readFile(file, 'utf-8');
+      return fileContent;
     }),
   );
   await fs.writeFile(output, contents.join('\n'));
