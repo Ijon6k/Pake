@@ -39,6 +39,34 @@
     }
   }
 
+  // Recursive ad payload cleaner for YouTube responses
+  function cleanYoutubeAdData(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) {
+        cleanYoutubeAdData(obj[i]);
+      }
+      return;
+    }
+
+    const adProperties = ["adPlacements", "playerAds", "adSlots"];
+    for (const prop of adProperties) {
+      if (prop in obj) {
+        if (DEBUG) console.log(`[Adblock] Stripped ${prop}`);
+        obj[prop] = [];
+      }
+    }
+
+    for (const key in obj) {
+      if (
+        Object.prototype.hasOwnProperty.call(obj, key) &&
+        typeof obj[key] === "object"
+      ) {
+        cleanYoutubeAdData(obj[key]);
+      }
+    }
+  }
+
   // Intercept Fetch API
   const originalFetch = window.fetch;
   window.fetch = async function (input, init) {
@@ -48,6 +76,7 @@
         : input instanceof Request
           ? input.url
           : "";
+
     if (shouldBlock(url)) {
       logBlock("Fetch", url);
       return new Response("", {
@@ -55,6 +84,28 @@
         statusText: "No Content",
       });
     }
+
+    if (
+      url.includes("/youtubei/v1/player") ||
+      url.includes("/youtubei/v1/next")
+    ) {
+      try {
+        const response = await originalFetch.apply(this, arguments);
+        const clone = response.clone();
+        let data = await clone.json();
+
+        cleanYoutubeAdData(data);
+
+        return new Response(JSON.stringify(data), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      } catch (e) {
+        if (DEBUG) console.error("[Adblock] Error cleaning Fetch response:", e);
+      }
+    }
+
     return originalFetch.apply(this, arguments);
   };
 
@@ -67,18 +118,39 @@
 
   const originalSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function () {
+    const urlString = String(this._url || "").toLowerCase();
+
     if (shouldBlock(this._url)) {
       logBlock("XHR", this._url);
-      Object.defineProperty(this, "status", { writable: true, value: 204 });
-      Object.defineProperty(this, "statusText", {
-        writable: true,
-        value: "No Content",
-      });
-      Object.defineProperty(this, "responseText", {
-        writable: true,
-        value: "",
-      });
-      Object.defineProperty(this, "readyState", { writable: true, value: 4 });
+      try {
+        Object.defineProperty(this, "status", {
+          writable: true,
+          configurable: true,
+          value: 204,
+        });
+        Object.defineProperty(this, "statusText", {
+          writable: true,
+          configurable: true,
+          value: "No Content",
+        });
+        Object.defineProperty(this, "responseText", {
+          writable: true,
+          configurable: true,
+          value: "",
+        });
+        Object.defineProperty(this, "response", {
+          writable: true,
+          configurable: true,
+          value: "",
+        });
+        Object.defineProperty(this, "readyState", {
+          writable: true,
+          configurable: true,
+          value: 4,
+        });
+      } catch (e) {
+        // Fallback
+      }
 
       if (typeof this.onload === "function") {
         this.onload();
@@ -87,8 +159,94 @@
       this.dispatchEvent(event);
       return;
     }
+
+    if (
+      urlString.includes("/youtubei/v1/player") ||
+      urlString.includes("/youtubei/v1/next")
+    ) {
+      const self = this;
+      const cleanXHRResponse = () => {
+        try {
+          let data = JSON.parse(self.responseText);
+          cleanYoutubeAdData(data);
+          const responseString = JSON.stringify(data);
+
+          try {
+            Object.defineProperty(self, "responseText", {
+              writable: true,
+              configurable: true,
+              value: responseString,
+            });
+            Object.defineProperty(self, "response", {
+              writable: true,
+              configurable: true,
+              value: responseString,
+            });
+          } catch (e) {
+            Object.defineProperty(self, "responseText", {
+              get: () => responseString,
+              configurable: true,
+            });
+            Object.defineProperty(self, "response", {
+              get: () => responseString,
+              configurable: true,
+            });
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      };
+
+      this.addEventListener("readystatechange", function () {
+        if (self.readyState === 4 && self.status === 200) {
+          cleanXHRResponse();
+        }
+      });
+
+      this.addEventListener("load", function () {
+        if (self.status === 200) {
+          cleanXHRResponse();
+        }
+      });
+    }
+
     return originalSend.apply(this, arguments);
   };
+
+  // Intercept initial window objects
+  const interceptInitialObjects = () => {
+    let initialPlayerResponse = window.ytInitialPlayerResponse;
+    Object.defineProperty(window, "ytInitialPlayerResponse", {
+      get: () => initialPlayerResponse,
+      set: (val) => {
+        if (val) {
+          cleanYoutubeAdData(val);
+        }
+        initialPlayerResponse = val;
+      },
+      configurable: true,
+    });
+
+    let initialData = window.ytInitialData;
+    Object.defineProperty(window, "ytInitialData", {
+      get: () => initialData,
+      set: (val) => {
+        if (val) {
+          cleanYoutubeAdData(val);
+        }
+        initialData = val;
+      },
+      configurable: true,
+    });
+
+    if (window.ytInitialPlayerResponse) {
+      cleanYoutubeAdData(window.ytInitialPlayerResponse);
+    }
+    if (window.ytInitialData) {
+      cleanYoutubeAdData(window.ytInitialData);
+    }
+  };
+  interceptInitialObjects();
 
   // Inject UI cleaner styles
   const style = document.createElement("style");
@@ -99,6 +257,9 @@
     ytd-display-ad-renderer,
     ytd-statement-banner-renderer,
     ytd-compact-promoted-video-renderer,
+    ytd-compact-promoted-item-renderer,
+    ytd-banner-promo-renderer,
+    ytd-brand-video-shelf-renderer,
     ytd-in-feed-ad-layout-renderer,
     #player-ads,
     #masthead-ad,
@@ -106,18 +267,27 @@
     .ytd-player-legacy-desktop-watch-ads-renderer,
     .ytp-ad-overlay-container,
     .ytp-ad-message-container,
+    .ytp-ad-action-button,
     #rendering-content .ytd-ad-slot-renderer,
     .main-leaderboard-container,
     .main-topBar-upgradeButton,
     [aria-label="Upgrade to Premium"],
     .ReactModalPortal:has([href*="premium"]),
     div[class*="Sponsored"],
+    span[class*="Sponsored"],
+    a[href*="/ad/"],
     iframe[src*="doubleclick.net"],
-    iframe[src*="adnxs.com"] {
+    iframe[src*="adnxs.com"],
+    .ytp-ad-player-overlay,
+    .ytp-ad-player-overlay-layout,
+    .ytp-ad-image-overlay,
+    .sponsored-container,
+    [data-testid="sponsored-profile-badge"] {
       display: none !important;
       opacity: 0 !important;
       height: 0 !important;
       width: 0 !important;
+      pointer-events: none !important;
     }
   `;
   if (document.head) {
@@ -131,30 +301,31 @@
     const video = document.querySelector("video");
     const player = document.querySelector(".html5-video-player");
     const hasAdOverlay = document.querySelector(
-      ".ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button-container",
+      ".ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button-container, .ytp-ad-player-overlay-layout"
     );
     const adShowing =
-      player &&
-      (player.classList.contains("ad-showing") ||
-        player.classList.contains("ad-interrupting"));
+      (player &&
+        (player.classList.contains("ad-showing") ||
+          player.classList.contains("ad-interrupting"))) ||
+      hasAdOverlay;
 
-    if (video && (adShowing || hasAdOverlay)) {
+    if (video && adShowing) {
       if (!video.muted) {
         video.muted = true;
         if (DEBUG) console.log("[Adblock] Muted YouTube ad video");
       }
-      if (video.playbackRate < 16) {
-        video.playbackRate = 16;
-        if (DEBUG) console.log("[Adblock] Speed up YouTube ad to 16x");
-      }
 
       const skipButton = document.querySelector(
-        ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-self-modern",
+        ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-self-modern"
       );
       if (skipButton) {
         skipButton.click();
         if (DEBUG) console.log("[Adblock] Clicked YouTube skip button");
       } else {
+        if (video.playbackRate < 16) {
+          video.playbackRate = 16;
+          if (DEBUG) console.log("[Adblock] Speed up YouTube ad to 16x");
+        }
         if (video.currentTime < video.duration && isFinite(video.duration)) {
           video.currentTime = video.duration - 0.1;
         }
@@ -165,10 +336,10 @@
   // Spotify Auto Mute
   const muteSpotifyAds = () => {
     const nowPlayingWidget = document.querySelector(
-      '[data-testid="now-playing-widget"]',
+      '[data-testid="now-playing-widget"]'
     );
     const adLink = document.querySelector(
-      '[data-testid="now-playing-widget"] a[href*="/ad/"]',
+      '[data-testid="now-playing-widget"] a[href*="/ad/"]'
     );
     const isAdPlaying =
       adLink ||
@@ -185,7 +356,7 @@
           if (DEBUG) console.log("[Adblock] Muted Spotify audio ad");
         }
         const skipButton = document.querySelector(
-          '[data-testid="control-button-skip-forward"]',
+          '[data-testid="control-button-skip-forward"]'
         );
         if (skipButton && !skipButton.disabled) {
           skipButton.click();
