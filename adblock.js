@@ -301,7 +301,7 @@
     const video = document.querySelector("video");
     const player = document.querySelector(".html5-video-player");
     const hasAdOverlay = document.querySelector(
-      ".ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button-container, .ytp-ad-player-overlay-layout"
+      ".ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button-container, .ytp-ad-player-overlay-layout",
     );
     const adShowing =
       (player &&
@@ -316,7 +316,7 @@
       }
 
       const skipButton = document.querySelector(
-        ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-self-modern"
+        ".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-self-modern",
       );
       if (skipButton) {
         skipButton.click();
@@ -336,10 +336,10 @@
   // Spotify Auto Mute
   const muteSpotifyAds = () => {
     const nowPlayingWidget = document.querySelector(
-      '[data-testid="now-playing-widget"]'
+      '[data-testid="now-playing-widget"]',
     );
     const adLink = document.querySelector(
-      '[data-testid="now-playing-widget"] a[href*="/ad/"]'
+      '[data-testid="now-playing-widget"] a[href*="/ad/"]',
     );
     const isAdPlaying =
       adLink ||
@@ -356,7 +356,7 @@
           if (DEBUG) console.log("[Adblock] Muted Spotify audio ad");
         }
         const skipButton = document.querySelector(
-          '[data-testid="control-button-skip-forward"]'
+          '[data-testid="control-button-skip-forward"]',
         );
         if (skipButton && !skipButton.disabled) {
           skipButton.click();
